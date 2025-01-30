@@ -1,8 +1,31 @@
 AWSTemplateFormatVersion: '2010-09-09'
-Description: 'CloudFormation Template to create a VPC, Subnets, Security Group, and an EC2 Instance'
+Description: 'CloudFormation Template to create a VPC, Subnets, Security Group, and EC2 Instances for Dev and Production'
+
+Parameters:
+  EnvironmentType:
+    Description: "Specify the environment type: dev or prod"
+    Type: String
+    AllowedValues: 
+      - dev
+      - prod
+    Default: dev
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+  InstanceType:
+    Description: "EC2 instance type"
+    Type: String
+    Default: t2.micro
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t3.micro
+      - t3.small
 
 Resources:
-  # VPC (Virtual Private Cloud)
+  # VPC
   MyVPC:
     Type: AWS::EC2::VPC
     Properties:
@@ -11,44 +34,38 @@ Resources:
       EnableDnsHostnames: true
       Tags:
         - Key: Name
-          Value: MyCustomVPC
+          Value: !Sub "${EnvironmentType}-VPC"
 
-  # Public Subnet (Subnet that assigns public IPs to instances)
+  # Public Subnet
   PublicSubnet:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref MyVPC
       CidrBlock: 10.0.1.0/24
-      MapPublicIpOnLaunch: true  # Automatically assign public IPs to instances
-      AvailabilityZone: !Select 
-        - 0
-        - !GetAZs 
-          Ref: AWS::Region
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select [ 0, !GetAZs  ]
       Tags:
         - Key: Name
-          Value: PublicSubnet
+          Value: !Sub "${EnvironmentType}-PublicSubnet"
 
-  # Private Subnet (For internal resources without public IPs)
+  # Private Subnet
   PrivateSubnet:
     Type: AWS::EC2::Subnet
     Properties:
       VpcId: !Ref MyVPC
       CidrBlock: 10.0.2.0/24
-      AvailabilityZone: !Select 
-        - 1
-        - !GetAZs 
-          Ref: AWS::Region
+      AvailabilityZone: !Select [ 1, !GetAZs  ]
       Tags:
         - Key: Name
-          Value: PrivateSubnet
+          Value: !Sub "${EnvironmentType}-PrivateSubnet"
 
-  # Internet Gateway (Required for internet access in the Public Subnet)
+  # Internet Gateway
   InternetGateway:
     Type: AWS::EC2::InternetGateway
     Properties:
       Tags:
         - Key: Name
-          Value: MyInternetGateway
+          Value: !Sub "${EnvironmentType}-InternetGateway"
 
   # Attach Internet Gateway to VPC
   AttachGateway:
@@ -57,22 +74,22 @@ Resources:
       VpcId: !Ref MyVPC
       InternetGatewayId: !Ref InternetGateway
 
-  # Public Route Table (Manages internet routes for Public Subnet)
+  # Public Route Table
   PublicRouteTable:
     Type: AWS::EC2::RouteTable
     Properties:
       VpcId: !Ref MyVPC
       Tags:
         - Key: Name
-          Value: PublicRouteTable
+          Value: !Sub "${EnvironmentType}-PublicRouteTable"
 
-  # Default Route in Public Route Table (Allows internet access)
+  # Public Route
   DefaultPublicRoute:
     Type: AWS::EC2::Route
     DependsOn: AttachGateway
     Properties:
       RouteTableId: !Ref PublicRouteTable
-      DestinationCidrBlock: 0.0.0.0/0  # Routes all outbound traffic to the internet
+      DestinationCidrBlock: 0.0.0.0/0
       GatewayId: !Ref InternetGateway
 
   # Associate Public Route Table with Public Subnet
@@ -82,39 +99,42 @@ Resources:
       SubnetId: !Ref PublicSubnet
       RouteTableId: !Ref PublicRouteTable
 
-  # Security Group for EC2 Instance (Controls inbound/outbound traffic)
+  # Security Group
   MySecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: "Allow SSH, HTTPS, and MySQL access"
+      GroupDescription: "Allow SSH, HTTPS, and MySQL access based on environment"
       VpcId: !Ref MyVPC
       SecurityGroupIngress:
         - IpProtocol: tcp
           FromPort: 22
           ToPort: 22
-          CidrIp: 0.0.0.0/0  # ⚠️ SSH open to all (consider restricting by IP)
+          CidrIp: 0.0.0.0/0 # Consider restricting by IP
         - IpProtocol: tcp
           FromPort: 443
           ToPort: 443
-          CidrIp: 0.0.0.0/0  # HTTPS open to all
-        - IpProtocol: tcp
-          FromPort: 3306
-          ToPort: 3306
-          CidrIp: 0.0.0.0/0  # ⚠️ MySQL open to all (⚠️ Not recommended in production)
+          CidrIp: 0.0.0.0/0
+        - !If 
+          - IsDev
+          - IpProtocol: tcp
+            FromPort: 3306
+            ToPort: 3306
+            CidrIp: 0.0.0.0/0  # Open MySQL only in dev (⚠️ not recommended for prod)
+          - !Ref "AWS::NoValue"
       Tags:
         - Key: Name
-          Value: MySecurityGroup
+          Value: !Sub "${EnvironmentType}-SecurityGroup"
 
-  # EC2 Instance (Virtual Machine)
+  # EC2 Instance
   MyEC2Instance:
     Type: AWS::EC2::Instance
     Properties:
-      InstanceType: t2.micro  # Updated to t2.micro
-      KeyName: aws-final-key-pair  # Set key pair for SSH access
-      ImageId: !Ref LatestAmiId  # Latest Amazon Linux 2023 AMI
+      InstanceType: !Ref InstanceType
+      KeyName: aws-final-key-pair
+      ImageId: !Ref LatestAmiId
       SecurityGroupIds:
         - !Ref MySecurityGroup
-      SubnetId: !Ref PublicSubnet  # Place instance in the public subnet
+      SubnetId: !Ref PublicSubnet
       BlockDeviceMappings:
         - DeviceName: /dev/xvda
           Ebs:
@@ -122,15 +142,11 @@ Resources:
             VolumeType: gp3
       Tags:
         - Key: Name
-          Value: MyEC2Instance
+          Value: !Sub "${EnvironmentType}-EC2Instance"
 
-# Parameter to fetch the latest Amazon Linux 2023 AMI dynamically
-Parameters:
-  LatestAmiId:
-    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
-    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+Conditions:
+  IsDev: !Equals [ !Ref EnvironmentType, dev ]
 
-# Outputs to display important resources
 Outputs:
   VPC:
     Description: "VPC ID"
@@ -150,4 +166,4 @@ Outputs:
 
   EC2Instance:
     Description: "EC2 Instance ID"
-    Value: !Ref MyEC2Instance
+    Value: !Ref MyEC2Instance 

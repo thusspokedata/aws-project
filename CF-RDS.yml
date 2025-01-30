@@ -1,0 +1,224 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'CloudFormation Template to create a VPC, Subnets, Security Group, an EC2 Instance, and an RDS Database for Production'
+
+Parameters:
+  Environment:
+    Description: "Deployment environment (development or production)"
+    Type: String
+    Default: development
+    AllowedValues:
+      - development
+      - production
+
+  LatestAmiId:
+    Type: AWS::SSM::Parameter::Value<AWS::EC2::Image::Id>
+    Default: /aws/service/ami-amazon-linux-latest/al2023-ami-kernel-default-x86_64
+
+Conditions:
+  IsProduction: !Equals [!Ref Environment, production]
+
+Resources:
+  # VPC (Virtual Private Cloud)
+  MyVPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.0.0.0/16
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      Tags:
+        - Key: Name
+          Value: MyCustomVPC
+
+  # Public Subnet (For EC2 instance)
+  PublicSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.1.0/24
+      MapPublicIpOnLaunch: true
+      AvailabilityZone: !Select 
+        - 0
+        - !GetAZs 
+          Ref: AWS::Region
+      Tags:
+        - Key: Name
+          Value: PublicSubnet
+
+  # Private Subnet 1 (For RDS instance)
+  PrivateSubnet:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.2.0/24
+      AvailabilityZone: !Select 
+        - 0  # Ensure it is in the first AZ
+        - !GetAZs 
+          Ref: AWS::Region
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet
+  
+  # Private Subnet 2 (For RDS, must be in a different AZ)
+  PrivateSubnet2:
+    Type: AWS::EC2::Subnet
+    Properties:
+      VpcId: !Ref MyVPC
+      CidrBlock: 10.0.3.0/24
+      AvailabilityZone: !Select 
+        - 1  # Ensure it is in the second AZ
+        - !GetAZs 
+          Ref: AWS::Region
+      Tags:
+        - Key: Name
+          Value: PrivateSubnet2
+
+  # Internet Gateway (For public internet access)
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: MyInternetGateway
+
+  # Attach Internet Gateway to VPC
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref MyVPC
+      InternetGatewayId: !Ref InternetGateway
+
+  # Public Route Table
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref MyVPC
+      Tags:
+        - Key: Name
+          Value: PublicRouteTable
+
+  # Default Route for Public Subnet
+  DefaultPublicRoute:
+    Type: AWS::EC2::Route
+    DependsOn: AttachGateway
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  # Associate Public Route Table with Public Subnet
+  PublicSubnetRouteTableAssociation:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicSubnet
+      RouteTableId: !Ref PublicRouteTable
+
+  # Security Group for EC2 and RDS
+  MySecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: "Allow SSH, HTTPS, and PostgreSQL access"
+      VpcId: !Ref MyVPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: 0.0.0.0/0  
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0  
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          CidrIp: 0.0.0.0/0  
+      Tags:
+        - Key: Name
+          Value: MySecurityGroup
+
+  # EC2 Instance
+  MyEC2Instance:
+    Type: AWS::EC2::Instance
+    Properties:
+      InstanceType: t2.micro
+      KeyName: aws-final-key-pair
+      ImageId: !Ref LatestAmiId
+      SecurityGroupIds:
+        - !Ref MySecurityGroup
+      SubnetId: !Ref PublicSubnet
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeSize: 30
+            VolumeType: gp3
+      Tags:
+        - Key: Name
+          Value: MyEC2Instance
+
+  # RDS PostgreSQL Database (Only in Production)
+  MyRDSInstance:
+    Type: AWS::RDS::DBInstance
+    Condition: IsProduction
+    DeletionPolicy: Snapshot
+    UpdateReplacePolicy: Snapshot
+    Properties:
+      DBInstanceIdentifier: my-production-db
+      BackupRetentionPeriod: 7  
+      DBName: mydatabase
+      Engine: postgres
+      EngineVersion: "15.10"
+      MasterUsername: '{{resolve:secretsmanager:/aws/secret/prod/rds/password:SecretString:username}}'
+      MasterUserPassword: '{{resolve:secretsmanager:/aws/secret/prod/rds/password:SecretString:password}}'
+      DBInstanceClass: db.t3.micro
+      AllocatedStorage: 20
+      StorageType: gp3
+      MultiAZ: false
+      PubliclyAccessible: false
+      VPCSecurityGroups:
+        - !Ref MySecurityGroup
+      DBSubnetGroupName: !Ref MyDBSubnetGroup
+      Tags:
+        - Key: Name
+          Value: ProductionRDSInstance
+
+  # DB Subnet Group (Ensures RDS spans at least two Availability Zones)
+  MyDBSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Condition: IsProduction  
+    Properties:
+      DBSubnetGroupDescription: "Subnets for RDS"
+      SubnetIds:
+        - !Ref PrivateSubnet
+        - !Ref PrivateSubnet2
+      Tags:
+        - Key: Name
+          Value: MyDBSubnetGroup
+
+Outputs:
+  VPC:
+    Description: "VPC ID"
+    Value: !Ref MyVPC
+
+  PublicSubnet:
+    Description: "Public Subnet ID"
+    Value: !Ref PublicSubnet
+
+  PrivateSubnet:
+    Description: "Private Subnet ID"
+    Value: !Ref PrivateSubnet
+
+  PrivateSubnet2:
+    Description: "Private Subnet ID (Second AZ)"
+    Value: !Ref PrivateSubnet2
+
+  SecurityGroup:
+    Description: "Security Group ID"
+    Value: !Ref MySecurityGroup
+
+  EC2Instance:
+    Description: "EC2 Instance ID"
+    Value: !Ref MyEC2Instance
+
+  RDSInstance:
+    Condition: IsProduction
+    Description: "RDS Instance Endpoint"
+    Value: !GetAtt MyRDSInstance.Endpoint.Address
