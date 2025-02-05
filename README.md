@@ -8,7 +8,6 @@ The goal of this project is to build and deploy a **scalable and highly availabl
 ## 🏗️ Technologies & Services To Be Used
 - **Backend:** NestJS (Node.js framework)
 - **Frontend:** Next.js (React framework)
-- **Cloud Provider:** AWS
 - **Infrastructure as Code (IaC):** AWS CloudFormation
 - **Compute:** EC2 (Elastic Compute Cloud)
 - **Load Balancer:** AWS Application Load Balancer (ALB)

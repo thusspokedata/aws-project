@@ -1,0 +1,46 @@
+version: '3'
+
+services:
+  app:
+    image: thusspokedata/kooben-be:1.2.0
+    platform: linux/amd64
+    depends_on:
+      - db
+    restart: always
+    container_name: koobenApp-dockereando
+    env_file:
+      - .env
+    ports:
+      - "${PORT}:${PORT}"
+    environment:
+      APP_VERSION: ${APP_VERSION}
+      DB_PASSWORD: ${DB_PASSWORD}
+      DB_NAME: ${DB_NAME}
+      DB_HOST: ${DB_HOST}
+      DB_PORT: ${DB_PORT}
+      DB_USERNAME: ${DB_USERNAME}
+      STAGE: ${STAGE}
+      PORT: ${PORT}
+      HOST_API: ${HOST_API}
+      JWT_SECRET: ${JWT_SECRET}
+      CLOUDINARY_CLOUD_NAME: ${CLOUDINARY_CLOUD_NAME}
+      CLOUDINARY_API_KEY: ${CLOUDINARY_API_KEY}
+      CLOUDINARY_API_SECRET: ${CLOUDINARY_API_SECRET}
+      CLOUDINARY_URL: ${CLOUDINARY_URL}
+      CLERK_SECRET_KEY: ${CLERK_SECRET_KEY}
+
+  db:
+    image: postgres:14.3
+    restart: always
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_PASSWORD: ${DB_PASSWORD}
+      POSTGRES_DB: ${DB_NAME}
+    container_name: koobenDB
+    volumes:
+      - ./postgres:/var/lib/postgresql/data
+
+volumes:
+  postgres-db:
+    external: false
