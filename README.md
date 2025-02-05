@@ -22,9 +22,3 @@ The goal of this project is to build and deploy a **scalable and highly availabl
 ✔️ Database management with Amazon RDS  
 ✔️ Logging & Monitoring with AWS CloudWatch  
 ✔️ Security best practices (IAM, VPC, Security Groups)  
-
-## 🚀 Deployment & Usage
-### **1. Clone the Repository**
-```bash
-git clone https://github.com/thusspokedata/aws-final-project.git
-cd aws-final-project
