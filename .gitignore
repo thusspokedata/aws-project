@@ -1,3 +1,5 @@
 .env
 .env.local
 some-commands.md
+
+.DS_Store
